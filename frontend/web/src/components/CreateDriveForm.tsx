@@ -42,9 +42,8 @@ export const CreateDriveForm: React.FC<Props> = ({ onSuccess }) => {
     setError(null);
     const totalTarget = milestones.reduce((s, m) => s + (parseFloat(m.amount) || 0), 0);
     try {
-      // Check NGO Limit
-      const { data: profile } = await supabase.from('profiles').select('max_drive_limit').single();
-      const limit = profile?.max_drive_limit || 1000000;
+      // NGO Limit check (using a default for demo mode)
+      const limit = 1000000;
       if (totalTarget > limit) {
         throw new Error(`Your fundraising limit is ₹${limit.toLocaleString('en-IN')}. Please contact Admin to increase it.`);
       }

@@ -53,10 +53,14 @@ app.post('/approve-milestone', async (req, res) => {
 
     // Log the approval action for Audit History
     await supabase.from('audit_logs').insert({
-      milestone_id: milestoneId,
-      action: status,
-      admin_id: adminId,
-      notes: `Funds of ₹${milestoneData.target_amount} released/processed.`
+      action: `MILESTONE_${status.toUpperCase()}`,
+      actor_id: adminId === 'admin-placeholder-id' ? null : adminId,
+      target_table: 'milestones',
+      target_id: milestoneId,
+      details: {
+        amount: milestoneData.target_amount,
+        notes: `Funds of ₹${milestoneData.target_amount} released/processed.`
+      }
     });
 
     return res.status(200).json({ success: true, message: `Milestone ${status}`, data: milestoneData });

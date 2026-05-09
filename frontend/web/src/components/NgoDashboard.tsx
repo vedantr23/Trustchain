@@ -6,9 +6,9 @@ import { ProofSubmissionForm } from './ProofSubmissionForm';
 import { t, LANGUAGES } from '../i18n';
 import type { LangCode } from '../i18n';
 
-interface Props { onBack: () => void; lang: LangCode; dark: boolean; setDark: (v: boolean) => void; setLang: (v: LangCode) => void; }
+interface Props { onBack: () => void; lang: LangCode; dark: boolean; setDark: (v: boolean) => void; setLang: (v: LangCode) => void; user: any; }
 
-export const NgoDashboard: React.FC<Props> = ({ onBack, lang, dark, setDark, setLang }) => {
+export const NgoDashboard: React.FC<Props> = ({ onBack, lang, dark, setDark, setLang, user }) => {
   const { drives, loading, refetch } = useDrives();
   const [tab, setTab] = useState<'home' | 'create' | 'proof'>('home');
   const [selectedDrive, setSelectedDrive] = useState<any | null>(null);
@@ -46,7 +46,7 @@ export const NgoDashboard: React.FC<Props> = ({ onBack, lang, dark, setDark, set
           </select>
           <button className="theme-toggle" onClick={() => setDark(!dark)} title={dark ? 'Light' : 'Dark'}>{dark ? '☀️' : '🌙'}</button>
           <span className="live-dot" />
-          <span className="text-sm text-muted">NGO — {t(lang, 'live')}</span>
+          <span className="text-sm text-muted">{user?.name || 'NGO'} — {t(lang, 'live')}</span>
         </div>
       </nav>
 

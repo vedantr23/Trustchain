@@ -6,6 +6,7 @@ import { t, LANGUAGES } from './i18n';
 import type { LangCode } from './i18n';
 
 type Role = 'landing' | 'ngo' | 'donor' | 'admin';
+interface User { name: string; email: string; id: string; role: Role; }
 
 const GALLERY_IMAGES = [
   'https://images.unsplash.com/photo-1488521787991-ed7bbaae773c?q=80&w=600',
@@ -17,15 +18,44 @@ const GALLERY_IMAGES = [
 
 export default function App() {
   const [role, setRole] = useState<Role>('landing');
+  const [user, setUser] = useState<User | null>(null);
   const [dark, setDark] = useState(false);
   const [lang, setLang] = useState<LangCode>('en');
 
+  // Dummy Auth Overlay State
+  const [showLogin, setShowLogin] = useState<Role | null>(null);
+  const [dummyName, setDummyName] = useState('');
+  const [dummyEmail, setDummyEmail] = useState('');
+
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+    // Load dummy session
+    const saved = localStorage.getItem('trustchain_session');
+    if (saved) setUser(JSON.parse(saved));
   }, [dark]);
 
-  if (role === 'ngo')   return <NgoDashboard   onBack={() => setRole('landing')} lang={lang} dark={dark} setDark={setDark} setLang={setLang} />;
-  if (role === 'donor') return <DonorDashboard  onBack={() => setRole('landing')} lang={lang} dark={dark} setDark={setDark} setLang={setLang} />;
+  const handleDummyLogin = () => {
+    if (!dummyName || !showLogin) return;
+    const newUser: User = { 
+      name: dummyName, 
+      email: dummyEmail || `${dummyName.toLowerCase().replace(' ', '')}@example.com`,
+      id: showLogin === 'ngo' ? 'dummy-ngo-id' : 'dummy-donor-id',
+      role: showLogin
+    };
+    setUser(newUser);
+    localStorage.setItem('trustchain_session', JSON.stringify(newUser));
+    setRole(showLogin);
+    setShowLogin(null);
+  };
+
+  const handleLogout = () => {
+    setUser(null);
+    localStorage.removeItem('trustchain_session');
+    setRole('landing');
+  };
+
+  if (role === 'ngo')   return <NgoDashboard   user={user} onBack={handleLogout} lang={lang} dark={dark} setDark={setDark} setLang={setLang} />;
+  if (role === 'donor') return <DonorDashboard  user={user} onBack={handleLogout} lang={lang} dark={dark} setDark={setDark} setLang={setLang} />;
   if (role === 'admin') return <AdminDashboard  onBack={() => setRole('landing')} lang={lang} dark={dark} setDark={setDark} setLang={setLang} />;
 
   return (
@@ -34,8 +64,8 @@ export default function App() {
         <div className="topnav-logo">Trust<span>chain</span></div>
         <div className="row gap-24">
           <span className="text-bold pointer">About</span>
-          <span className="text-bold pointer" onClick={() => setRole('donor')}>Donate</span>
-          <span className="text-bold pointer" onClick={() => setRole('ngo')}>Fundraise</span>
+          <span className="text-bold pointer" onClick={() => setShowLogin('donor')}>Donate</span>
+          <span className="text-bold pointer" onClick={() => setShowLogin('ngo')}>Fundraise</span>
           <select
             className="lang-select"
             style={{ background: 'white' }}
@@ -46,7 +76,7 @@ export default function App() {
               <option key={l.code} value={l.code}>{l.native}</option>
             ))}
           </select>
-          <button className="landing-hero-btn" style={{ padding: '8px 20px', fontSize: '14px' }} onClick={() => setRole('donor')}>
+          <button className="landing-hero-btn" style={{ padding: '8px 20px', fontSize: '14px' }} onClick={() => setShowLogin('donor')}>
             Donate Now
           </button>
         </div>
@@ -56,7 +86,7 @@ export default function App() {
         <h1 className="landing-headline">
           Where successful<br />fundraisers start
         </h1>
-        <button className="landing-hero-btn" onClick={() => setRole('donor')}>
+        <button className="landing-hero-btn" onClick={() => setShowLogin('donor')}>
           Start a TrustChain
         </button>
       </div>
@@ -68,14 +98,14 @@ export default function App() {
       </div>
 
       <div className="role-cards slide-up" style={{ animationDelay: '0.2s' }}>
-        <div className="role-card" onClick={() => setRole('ngo')}>
+        <div className="role-card" onClick={() => setShowLogin('ngo')}>
           <div className="role-card-icon">🌿</div>
           <h3>{t(lang, 'ngoDashboard')}</h3>
           <p>{t(lang, 'ngoDesc')}</p>
           <button className="btn btn-outline btn-full">Become a Partner</button>
         </div>
 
-        <div className="role-card" onClick={() => setRole('donor')}>
+        <div className="role-card" onClick={() => setShowLogin('donor')}>
           <div className="role-card-icon">💝</div>
           <h3>{t(lang, 'donorPortal')}</h3>
           <p>{t(lang, 'donorDesc')}</p>
@@ -89,6 +119,24 @@ export default function App() {
           <button className="btn btn-outline btn-full">Administration</button>
         </div>
       </div>
+
+      {showLogin && (
+        <div className="modal-overlay" onClick={() => setShowLogin(null)}>
+          <div className="modal-content slide-up" onClick={e => e.stopPropagation()} style={{ maxWidth: 400 }}>
+            <h2 style={{ marginBottom: 16 }}>Welcome to TrustChain</h2>
+            <p className="text-muted mb-24">Enter your details to access the {showLogin.toUpperCase()} {showLogin === 'ngo' ? 'Partner' : 'Donor'} portal.</p>
+            <div className="form-group mb-16">
+              <label>{showLogin === 'ngo' ? 'Organization Name' : 'Full Name'}</label>
+              <input value={dummyName} onChange={e => setDummyName(e.target.value)} placeholder="e.g. Save the Children" />
+            </div>
+            <div className="form-group mb-24">
+              <label>Email Address</label>
+              <input value={dummyEmail} onChange={e => setDummyEmail(e.target.value)} placeholder="name@example.com" />
+            </div>
+            <button className="btn btn-primary btn-full btn-lg" onClick={handleDummyLogin}>Continue →</button>
+          </div>
+        </div>
+      )}
 
       <div className="footer-landing" style={{ padding: '40px', color: 'var(--text-4)', fontSize: '12px' }}>
         <span className="live-dot" /> {t(lang, 'syncFooter')}

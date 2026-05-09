@@ -13,6 +13,7 @@ A platform for transparent and secure charity donations using blockchain-inspire
    - Navigate to `backend/`
    - Run `npm install`
    - Set up your `.env` file with Supabase credentials.
+   - **Database Setup**: Open the Supabase SQL Editor and paste the contents of `backend/schema.sql` to initialize the optimized schema and RLS policies.
 
 2. **Frontend**:
    - Navigate to `frontend/web/`

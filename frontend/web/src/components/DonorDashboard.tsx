@@ -10,6 +10,7 @@ interface Props {
   dark: boolean;
   setDark: (v: boolean) => void;
   setLang: (v: LangCode) => void;
+  user: any;
 }
 
 const LEADERBOARD = [
@@ -32,7 +33,7 @@ const PAST_DONATIONS = [
 const WHATSAPP_NUMBER = '8262001975';
 const WHATSAPP_LINK = `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent('Hello! I am interested in supporting your NGO on TrustChain.')}`;
 
-export const DonorDashboard: React.FC<Props> = ({ onBack, lang, dark, setDark, setLang }) => {
+export const DonorDashboard: React.FC<Props> = ({ onBack, lang, dark, setDark, setLang, user }) => {
   const { drives, loading, donate, donating } = useDonorDashboard();
   const [tab, setTab] = useState<'browse' | 'profile' | 'leaderboard'>('browse');
   const [selectedDrive, setSelectedDrive] = useState<any | null>(null);
@@ -41,7 +42,7 @@ export const DonorDashboard: React.FC<Props> = ({ onBack, lang, dark, setDark, s
   const [stars, setStars] = useState(0);
   const [review, setReview] = useState('');
   const [amount, setAmount] = useState('');
-  const [donor, setDonor] = useState('');
+  const [donor, setDonor] = useState(user?.name || '');
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
   const [locationFilter, setLocationFilter] = useState({ state: 'All', city: 'All' });
   const [fundedMilestones, setFundedMilestones] = useState<string[]>([]);
@@ -134,7 +135,7 @@ export const DonorDashboard: React.FC<Props> = ({ onBack, lang, dark, setDark, s
           </select>
           <button className="theme-toggle" onClick={() => setDark(!dark)} title={dark ? 'Light' : 'Dark'}>{dark ? '☀️' : '🌙'}</button>
           <span className="live-dot" />
-          <span className="text-sm text-muted">{t(lang, 'donor')} — {t(lang, 'live')}</span>
+          <span className="text-sm text-muted">{user?.name || t(lang, 'donor')} — {t(lang, 'live')}</span>
         </div>
       </nav>
 
@@ -339,8 +340,8 @@ export const DonorDashboard: React.FC<Props> = ({ onBack, lang, dark, setDark, s
             {/* Profile Card */}
             <div className="card mb-16" style={{ textAlign: 'center', padding: 40 }}>
               <div style={{ width: 72, height: 72, borderRadius: '50%', background: 'var(--primary-lt)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 28, margin: '0 auto 16px' }}>👤</div>
-              <h2 style={{ fontSize: 22, marginBottom: 4 }}>Jane Doe</h2>
-              <p className="text-muted mb-16">jane@example.com &nbsp;·&nbsp; Mumbai, Maharashtra</p>
+              <h2 style={{ fontSize: 22, marginBottom: 4 }}>{user?.name || 'Jane Doe'}</h2>
+              <p className="text-muted mb-16">{user?.email || 'jane@example.com'} &nbsp;·&nbsp; Mumbai, Maharashtra</p>
               <div className="row" style={{ justifyContent: 'center', gap: 8 }}>
                 <span className="badge badge-green">{t(lang, 'verifiedDonor')}</span>
                 <span className="badge badge-blue">{t(lang, 'silverImpact')}</span>
