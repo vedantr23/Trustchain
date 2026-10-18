@@ -1,11 +1,25 @@
+import React, { useState } from 'react';
 import { supabase } from '../supabase';
-import { BlockchainService } from '../utils/BlockchainService';
+import { t, td } from '../i18n';
+import type { LangCode } from '../i18n';
 
-interface Milestone { title: string; amount: string; description: string; targetDate: string; gps: boolean; photo: boolean; video: boolean; bill: boolean; }
+interface MilestoneItem {
+  title: string;
+  amount: string;
+  description: string;
+  targetDate: string;
+  gps: boolean;
+  photo: boolean;
+  video: boolean;
+  bill: boolean;
+}
 
-interface Props { onSuccess: () => void; }
+interface Props {
+  onSuccess: () => void;
+  lang?: LangCode;
+}
 
-export const CreateDriveForm: React.FC<Props> = ({ onSuccess }) => {
+export const CreateDriveForm: React.FC<Props> = ({ onSuccess, lang = 'en' }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError]   = useState<string | null>(null);
   const [step, setStep]     = useState<1 | 2>(1);
@@ -16,75 +30,104 @@ export const CreateDriveForm: React.FC<Props> = ({ onSuccess }) => {
   const [problem, setProblem]         = useState('');
   const [category, setCategory]       = useState('Disaster Relief');
   const [location, setLocation]       = useState('');
-  const [target, setTarget]           = useState('');
   const [startDate, setStartDate]     = useState('');
   const [endDate, setEndDate]         = useState('');
   const [beneficiaries, setBeneficiaries] = useState('');
   const [urgency, setUrgency]         = useState('High');
+  const [payoutUpiId, setPayoutUpiId] = useState('');
 
   // Step 2
-  const [milestones, setMilestones] = useState<Milestone[]>([
+  const [milestones, setMilestones] = useState<MilestoneItem[]>([
     { title: '', amount: '', description: '', targetDate: '', gps: false, photo: true, video: false, bill: true },
   ]);
 
   const addMilestone = () =>
-    setMilestones(prev => [...prev, { title: '', amount: '', description: '', targetDate: '', gps: false, photo: true, video: false, bill: true }]);
+    setMilestones((prev: MilestoneItem[]) => [...prev, { title: '', amount: '', description: '', targetDate: '', gps: false, photo: true, video: false, bill: true }]);
 
-  const updateM = (i: number, field: keyof Milestone, val: any) =>
-    setMilestones(prev => prev.map((m, idx) => idx === i ? { ...m, [field]: val } : m));
+  const updateM = (i: number, field: keyof MilestoneItem, val: any) =>
+    setMilestones((prev: MilestoneItem[]) => prev.map((m: MilestoneItem, idx: number) => idx === i ? { ...m, [field]: val } : m));
 
   const removeM = (i: number) =>
-    setMilestones(prev => prev.filter((_, idx) => idx !== i));
+    setMilestones((prev: MilestoneItem[]) => prev.filter((_: MilestoneItem, idx: number) => idx !== i));
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError(null);
-    const totalTarget = milestones.reduce((s, m) => s + (parseFloat(m.amount) || 0), 0);
+    const totalTarget = milestones.reduce((s: number, m: MilestoneItem) => s + (parseFloat(m.amount) || 0), 0);
     try {
-      // NGO Limit check (using a default for demo mode)
+      // NGO Limit check
       const limit = 1000000;
       if (totalTarget > limit) {
         throw new Error(`Your fundraising limit is ₹${limit.toLocaleString('en-IN')}. Please contact Admin to increase it.`);
       }
 
-      const { data: drive, error: dErr } = await supabase.from('drives').insert({
-        title, description, problem_statement: problem, category,
-        location, target_amount: totalTarget || parseFloat(target),
-        start_date: startDate, end_date: endDate,
-        beneficiaries_count: parseInt(beneficiaries) || 0,
-        urgency_level: urgency, raised_amount: 0,
-      }).select().single();
-      if (dErr) throw dErr;
+      const emptyToNull = (v: string) => v.trim() === '' ? null : v.trim();
 
-      // Blockchain integration
-      let blockchainId = null;
-      try {
-        console.log("Creating on-chain campaign...");
-        blockchainId = await BlockchainService.createCampaign(title, totalTarget || parseFloat(target), milestones.length);
-        console.log("On-chain campaign created with ID:", blockchainId);
-        
-        // Update the drive with the blockchain ID
-        await supabase.from('drives').update({ blockchain_id: Number(blockchainId) }).eq('id', drive.id);
-      } catch (bcErr) {
-        console.error("Blockchain campaign creation failed:", bcErr);
-        // We continue anyway for demo purposes, but in production this should be handled
+      // 1. Create Drive on Supabase
+      const payload: any = {
+        title,
+        description: emptyToNull(description),
+        problem_statement: emptyToNull(problem),
+        category,
+        location: emptyToNull(location),
+        target_amount: totalTarget || 100000,
+        raised_amount: 0,
+        urgency_level: urgency,
+        beneficiaries_count: parseInt(beneficiaries) || null,
+        payout_upi_id: payoutUpiId || null,
+        ngo_id: '00000000-0000-0000-0000-000000000000',
+      };
+      if (startDate) payload.start_date = startDate;
+      if (endDate)   payload.end_date   = endDate;
+
+      const { data: driveData, error: dErr } = await supabase.from('drives').insert([payload]).select().single();
+      if (dErr) {
+        console.error("Supabase drive insert error:", dErr);
+        throw new Error(`Failed to create drive: ${dErr.message}`);
       }
 
+      const insertedDriveId = driveData.id;
+
+      // 2. Audit Log (non-blocking)
+      try {
+        await supabase
+          .from('audit_logs')
+          .insert({
+            action: 'DRIVE_CREATED',
+            target_table: 'drives',
+            details: { title, target_amount: totalTarget, category },
+          });
+      } catch (aErr) {
+        console.warn("Audit log notice:", aErr);
+      }
+
+      // 3. Create Milestones on Supabase with accurate column names
       if (milestones.length) {
-        const mp = milestones.map(m => ({
-          drive_id: drive.id, title: m.title, description: m.description,
-          target_amount: parseFloat(m.amount) || 0, target_date: m.targetDate,
-          gps_required: m.gps, photo_required: m.photo,
-          video_required: m.video, invoice_required: m.bill,
+        const mp = milestones.map((m: MilestoneItem) => ({
+          drive_id: insertedDriveId,
+          title: m.title,
+          description: emptyToNull(m.description),
+          target_amount: parseFloat(m.amount) || 0,
+          target_date: emptyToNull(m.targetDate),
+          gps_required: Boolean(m.gps),
+          photo_required: Boolean(m.photo),
+          video_required: Boolean(m.video),
+          invoice_required: Boolean(m.bill),
           status: 'pending',
         }));
+
         const { error: mErr } = await supabase.from('milestones').insert(mp);
-        if (mErr) throw mErr;
+        if (mErr) {
+          console.error("Supabase milestone insert error:", mErr);
+          throw new Error(`Drive created, but milestone failed to save: ${mErr.message}`);
+        }
       }
+
       onSuccess();
     } catch (err: any) {
-      setError(err.message);
+      console.error("Create drive failed:", err);
+      setError(err.message || 'Failed to create drive');
     } finally {
       setLoading(false);
     }
@@ -103,7 +146,7 @@ export const CreateDriveForm: React.FC<Props> = ({ onSuccess }) => {
               color: step >= s ? '#fff' : 'var(--text-3)',
             }}>{s}</div>
             <span style={{ marginLeft: 8, fontSize: 13, fontWeight: step === s ? 600 : 400, color: step === s ? 'var(--text)' : 'var(--text-3)' }}>
-              {s === 1 ? 'Drive Details' : 'Milestones'}
+              {s === 1 ? t(lang, 'step1Details') : t(lang, 'step2Milestones')}
             </span>
             {s < 2 && <div style={{ width: 40, height: 2, background: step > s ? 'var(--primary)' : 'var(--border)', margin: '0 12px' }} />}
           </div>
@@ -116,48 +159,77 @@ export const CreateDriveForm: React.FC<Props> = ({ onSuccess }) => {
         <div className="slide-up">
           <div className="form-grid mb-16">
             <div className="form-group" style={{ gridColumn: '1/-1' }}>
-              <label>Drive Title *</label>
+              <label>{t(lang, 'driveTitle')} *</label>
               <input value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Food Relief for Flood Victims" required />
             </div>
             <div className="form-group">
-              <label>Category</label>
+              <label>{t(lang, 'category')}</label>
               <select value={category} onChange={e => setCategory(e.target.value)}>
-                <option>Disaster Relief</option><option>Education</option><option>Healthcare</option><option>Environment</option><option>Women Empowerment</option>
+                <option value="Disaster Relief">{td(lang, 'Disaster Relief')}</option>
+                <option value="Education">{td(lang, 'Education')}</option>
+                <option value="Healthcare">{td(lang, 'Healthcare')}</option>
+                <option value="Clean Water">{td(lang, 'Clean Water')}</option>
+                <option value="Animal Welfare">{td(lang, 'Animal Welfare')}</option>
               </select>
             </div>
             <div className="form-group">
-              <label>Urgency Level</label>
+              <label>{t(lang, 'urgencyLevel')}</label>
               <select value={urgency} onChange={e => setUrgency(e.target.value)}>
-                <option>Critical</option><option>High</option><option>Medium</option><option>Low</option>
+                <option value="Critical">{td(lang, 'Critical')}</option>
+                <option value="High">{td(lang, 'High')}</option>
+                <option value="Medium">{td(lang, 'Medium')}</option>
+                <option value="Active">{td(lang, 'Active')}</option>
               </select>
             </div>
             <div className="form-group" style={{ gridColumn: '1/-1' }}>
-              <label>Short Description</label>
+              <label>{t(lang, 'description')}</label>
               <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="What is this drive about?" rows={2} />
             </div>
             <div className="form-group" style={{ gridColumn: '1/-1' }}>
-              <label>Problem Statement</label>
+              <label>{t(lang, 'problemStatement')}</label>
               <textarea value={problem} onChange={e => setProblem(e.target.value)} placeholder="Describe the crisis in detail..." rows={3} />
             </div>
             <div className="form-group">
-              <label>Location</label>
+              <label>{t(lang, 'location')}</label>
               <input value={location} onChange={e => setLocation(e.target.value)} placeholder="Nagpur, Maharashtra" />
             </div>
             <div className="form-group">
-              <label>Estimated Beneficiaries</label>
+              <label>{t(lang, 'estimatedBeneficiaries')}</label>
               <input type="number" value={beneficiaries} onChange={e => setBeneficiaries(e.target.value)} placeholder="500" />
             </div>
+            <div className="form-group" style={{ gridColumn: '1/-1' }}>
+              <label>{t(lang, 'ngoPayoutUpi')} *</label>
+              <input
+                value={payoutUpiId}
+                onChange={e => setPayoutUpiId(e.target.value.trim())}
+                placeholder="e.g. relief.foundation@okaxis or ngochildcare@okhdfcbank"
+                required
+              />
+              <small style={{ color: 'var(--text-3)', fontSize: 12, marginTop: 4, display: 'block' }}>
+                🛡️ <strong>Milestone Escrow:</strong> Donors pay to Admin Escrow. Funds remain securely locked per milestone and are released automatically to this UPI ID once your proof is approved.
+              </small>
+            </div>
             <div className="form-group">
-              <label>Start Date</label>
+              <label>{t(lang, 'startDate')}</label>
               <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
             </div>
             <div className="form-group">
-              <label>End Date</label>
+              <label>{t(lang, 'endDate')}</label>
               <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} />
             </div>
           </div>
-          <button className="btn btn-primary btn-lg" onClick={() => setStep(2)} disabled={!title}>
-            Continue: Add Milestones →
+          {!payoutUpiId && (
+            <div style={{ color: "var(--red, #ef4444)", fontSize: 13, marginBottom: 12, fontWeight: 500 }}>
+              * NGO receiving UPI ID is required for receiving released milestone funds.
+            </div>
+          )}
+          <button
+            type="button"
+            className="btn btn-primary btn-lg"
+            onClick={() => setStep(2)}
+            disabled={!title || !payoutUpiId}
+          >
+            {t(lang, 'nextMilestones')} →
           </button>
         </div>
       )}
@@ -165,37 +237,37 @@ export const CreateDriveForm: React.FC<Props> = ({ onSuccess }) => {
       {step === 2 && (
         <form onSubmit={handleSubmit} className="slide-up">
           <div className="section-head">
-            <h3>Milestones</h3>
-            <button type="button" className="btn btn-outline btn-sm" onClick={addMilestone}>+ Add Milestone</button>
+            <h3>{t(lang, 'milestones')}</h3>
+            <button type="button" className="btn btn-outline btn-sm" onClick={addMilestone}>{t(lang, 'addMilestone')}</button>
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16, marginBottom: 24 }}>
-            {milestones.map((m, i) => (
+            {milestones.map((m: MilestoneItem, i: number) => (
               <div key={i} className="card card-sm" style={{ background: 'var(--bg)' }}>
                 <div className="row-sb mb-8">
-                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-3)' }}>MILESTONE {i + 1}</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-3)' }}>{t(lang, 'milestones').toUpperCase()} {i + 1}</span>
                   {milestones.length > 1 && <button type="button" className="btn-ghost btn-sm" style={{ fontSize: 18, lineHeight: 1 }} onClick={() => removeM(i)}>×</button>}
                 </div>
                 <div className="form-grid" style={{ gap: 10, marginBottom: 10 }}>
                   <div className="form-group">
-                    <label>Title *</label>
+                    <label>{t(lang, 'milestoneTitle')} *</label>
                     <input value={m.title} onChange={e => updateM(i, 'title', e.target.value)} placeholder="Buy food packets" required />
                   </div>
                   <div className="form-group">
-                    <label>Date *</label>
+                    <label>{t(lang, 'timestamp')} *</label>
                     <input type="date" value={m.targetDate} onChange={e => updateM(i, 'targetDate', e.target.value)} required />
                   </div>
                   <div className="form-group">
-                    <label>Amount Required (₹) *</label>
+                    <label>{t(lang, 'targetAmount')} *</label>
                     <input type="number" value={m.amount} onChange={e => updateM(i, 'amount', e.target.value)} placeholder="20000" required />
                   </div>
                   <div className="form-group">
-                    <label>Description</label>
+                    <label>{t(lang, 'description')}</label>
                     <input value={m.description} onChange={e => updateM(i, 'description', e.target.value)} placeholder="Brief summary..." />
                   </div>
                 </div>
                 <div className="row" style={{ flexWrap: 'wrap', gap: 16 }}>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)' }}>PROOF REQUIRED:</span>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-3)' }}>{t(lang, 'requiredProofs')}:</span>
                   {(['gps', 'photo', 'video', 'bill'] as const).map(f => (
                     <label key={f} className="check-row">
                       <input type="checkbox" checked={m[f]} onChange={e => updateM(i, f, e.target.checked)} />
@@ -208,9 +280,9 @@ export const CreateDriveForm: React.FC<Props> = ({ onSuccess }) => {
           </div>
 
           <div className="row">
-            <button type="button" className="btn btn-outline" onClick={() => setStep(1)}>← Back</button>
+            <button type="button" className="btn btn-outline" onClick={() => setStep(1)}>{t(lang, 'backBtn')}</button>
             <button type="submit" className="btn btn-green btn-lg" disabled={loading}>
-              {loading ? 'Creating drive...' : 'Launch Drive 🚀'}
+              {loading ? `${t(lang, 'live')}...` : t(lang, 'publishDrive')}
             </button>
           </div>
         </form>

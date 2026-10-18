@@ -9,6 +9,7 @@ interface CreateMilestoneFormProps {
 export const CreateMilestoneForm: React.FC<CreateMilestoneFormProps> = ({ driveId, onSuccess }) => {
   const [title, setTitle] = useState('');
   const [targetAmount, setTargetAmount] = useState('');
+  const [payoutUpiId, setPayoutUpiId] = useState('');
   
   // Proof Requirements
   const [reqPicture, setReqPicture] = useState(false);
@@ -32,38 +33,96 @@ export const CreateMilestoneForm: React.FC<CreateMilestoneFormProps> = ({ driveI
     }
 
     try {
-      // Create the Milestone
-      const { data: milestoneData, error: milestoneError } = await supabase
-        .from('milestones')
-        .insert({
+      const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:4000';
+      let createdMilestone: any = null;
+
+      // 1. Try Backend API (Service-Role backed, auto audit log)
+      try {
+        const res = await fetch(`${apiUrl}/milestones`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            drive_id: driveId,
+            title,
+            target_amount: targetNum,
+            gps_required: reqGps,
+            photo_required: reqPicture,
+            video_required: reqVideo,
+            invoice_required: reqBill,
+            requires_gps: reqGps,
+            requires_photo: reqPicture,
+            requires_video: reqVideo,
+            requires_invoice: reqBill,
+          }),
+        });
+        const resData = await res.json();
+        if (res.ok && resData.success && resData.data) {
+          createdMilestone = resData.data;
+        }
+      } catch (backendErr) {
+        console.warn('Backend /milestones API unavailable, falling back to Supabase:', backendErr);
+      }
+
+      // 2. Fallback to direct Supabase if backend did not succeed
+      if (!createdMilestone) {
+        const msPayload: any = {
           drive_id: driveId,
           title,
           target_amount: targetNum,
-          status: 'pending'
-        })
-        .select()
-        .single();
+          status: 'pending',
+          gps_required: reqGps,
+          photo_required: reqPicture,
+          video_required: reqVideo,
+          invoice_required: reqBill,
+        };
 
-      if (milestoneError) throw milestoneError;
-      
-      // We log the proof requirements requested by inserting dummy 'pending' proof slots 
-      // or handling it structurally in a robust app. For now as V1, we will just create 
-      // the milestone logic and the required schema entries can be added here.
-      
-      // For instance, if reqPicture is true, we could insert a proof slot for 'image' etc.
-      const proofEntries = [];
-      if (reqPicture) proofEntries.push({ milestone_id: milestoneData.id, proof_type: 'image', proof_url: 'pending', status: 'pending' });
-      if (reqVideo) proofEntries.push({ milestone_id: milestoneData.id, proof_type: 'video', proof_url: 'pending', status: 'pending' });
-      if (reqGps) proofEntries.push({ milestone_id: milestoneData.id, proof_type: 'gps', proof_url: 'pending', status: 'pending' });
-      if (reqBill) proofEntries.push({ milestone_id: milestoneData.id, proof_type: 'pdf', proof_url: 'pending', status: 'pending' });
+        const { data: milestoneData, error: milestoneError } = await supabase
+          .from('milestones')
+          .insert(msPayload)
+          .select()
+          .single();
 
-      if (proofEntries.length > 0) {
-         const { error: proofError } = await supabase.from('proofs').insert(proofEntries);
-         if (proofError) console.error("Could not append proof constraints", proofError);
+        if (milestoneError) {
+          console.error('Direct Supabase insert failed:', milestoneError);
+          throw new Error(`Failed to create milestone: ${milestoneError.message}`);
+        } else {
+          createdMilestone = milestoneData;
+        }
       }
-      
+
+      // 3. Fallback to Local ID if offline
+      if (!createdMilestone) {
+        createdMilestone = {
+          id: crypto.randomUUID ? crypto.randomUUID() : `ms-${Date.now()}`,
+          drive_id: driveId,
+          title,
+          target_amount: targetNum,
+          status: 'pending',
+          created_at: new Date().toISOString(),
+        };
+      }
+
+      // Update local storage if present
+      const localDrivesRaw = localStorage.getItem('trustchain_local_drives');
+      if (localDrivesRaw) {
+        try {
+          const localDrives = JSON.parse(localDrivesRaw);
+          const updated = localDrives.map((d: any) => {
+            if (d.id === driveId) {
+              const ms = d.milestones || [];
+              return { ...d, milestones: [...ms, createdMilestone] };
+            }
+            return d;
+          });
+          localStorage.setItem('trustchain_local_drives', JSON.stringify(updated));
+        } catch (e) {
+          /* ignore */
+        }
+      }
+
       setTitle('');
       setTargetAmount('');
+      setPayoutUpiId('');
       onSuccess();
     } catch (err: any) {
       setError(err.message || 'Failed to create milestone.');
@@ -99,6 +158,18 @@ export const CreateMilestoneForm: React.FC<CreateMilestoneFormProps> = ({ driveI
             value={targetAmount}
             onChange={(e) => setTargetAmount(e.target.value)}
             placeholder="5000"
+            disabled={loading}
+          />
+        </div>
+
+        <div className="input-group">
+          <label htmlFor="m_payoutUpi">Milestone Receiving UPI ID (Optional / Defaults to Drive UPI)</label>
+          <input
+            id="m_payoutUpi"
+            type="text"
+            value={payoutUpiId}
+            onChange={(e) => setPayoutUpiId(e.target.value.trim())}
+            placeholder="e.g. ngo.project@okhdfcbank"
             disabled={loading}
           />
         </div>
