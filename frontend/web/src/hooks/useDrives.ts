@@ -15,6 +15,8 @@ export interface Drive {
   beneficiaries_count?: number;
   urgency_level?: string;
   ngo_id: string | null;
+  payout_upi_id?: string;
+  blockchain_id?: number;
   created_at: string;
   milestones?: Milestone[];
 }
@@ -27,6 +29,14 @@ export interface Milestone {
   target_amount: number;
   status: 'pending' | 'approved' | 'rejected';
   target_date?: string;
+  requires_gps?: boolean;
+  requires_photo?: boolean;
+  requires_video?: boolean;
+  requires_invoice?: boolean;
+  gps_required?: boolean;
+  photo_required?: boolean;
+  video_required?: boolean;
+  invoice_required?: boolean;
   expected_beneficiaries?: number;
   created_at: string;
 }
@@ -37,27 +47,53 @@ export const useDrives = () => {
   const [error, setError] = useState<string | null>(null);
 
   const fetchDrives = useCallback(async () => {
-    const { data, error: fetchError } = await supabase
-      .from('drives')
-      .select('*, milestones(*)')
-      .order('created_at', { ascending: false });
+    setLoading(true);
+    try {
+      const { data, error: fetchError } = await supabase
+        .from('drives')
+        .select('*, milestones(*)')
+        .order('created_at', { ascending: false });
 
-    if (fetchError) { setError(fetchError.message); setLoading(false); return; }
-    setDrives((data as Drive[]) || []);
-    setLoading(false);
+      if (fetchError) {
+        console.error('Error fetching drives:', fetchError.message);
+        setError(fetchError.message);
+        setDrives([]);
+      } else {
+        setDrives((data as Drive[]) || []);
+        setError(null);
+      }
+    } catch (e: any) {
+      console.error('Network error fetching drives:', e);
+      setError(e?.message || 'Network error');
+      setDrives([]);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
     fetchDrives();
 
-    const channel = supabase
-      .channel('drives-global')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'drives' }, () => fetchDrives())
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'milestones' }, () => fetchDrives())
-      .subscribe();
+    const handleSync = () => fetchDrives();
+    window.addEventListener('trustchain-sync', handleSync);
 
-    return () => { supabase.removeChannel(channel); };
+    try {
+      const channel = supabase
+        .channel('drives-global')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'drives' }, () => fetchDrives())
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'milestones' }, () => fetchDrives())
+        .subscribe();
+
+      return () => {
+        window.removeEventListener('trustchain-sync', handleSync);
+        supabase.removeChannel(channel);
+      };
+    } catch (e) {
+      return () => {
+        window.removeEventListener('trustchain-sync', handleSync);
+      };
+    }
   }, [fetchDrives]);
 
-  return { drives, loading, error, refetch: fetchDrives };
+  return { drives, loading, error, refetch: fetchDrives, setDrives };
 };

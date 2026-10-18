@@ -2,8 +2,9 @@ import React, { useState } from 'react';
 import { useDrives } from '../hooks/useDrives';
 import { supabase } from '../supabase';
 import { CreateDriveForm } from './CreateDriveForm';
+import { CreateMilestoneForm } from './CreateMilestoneForm';
 import { ProofSubmissionForm } from './ProofSubmissionForm';
-import { t, LANGUAGES } from '../i18n';
+import { t, td, LANGUAGES } from '../i18n';
 import type { LangCode } from '../i18n';
 
 interface Props { onBack: () => void; lang: LangCode; dark: boolean; setDark: (v: boolean) => void; setLang: (v: LangCode) => void; user: any; }
@@ -12,21 +13,43 @@ export const NgoDashboard: React.FC<Props> = ({ onBack, lang, dark, setDark, set
   const { drives, loading, refetch } = useDrives();
   const [tab, setTab] = useState<'home' | 'create' | 'proof'>('home');
   const [selectedDrive, setSelectedDrive] = useState<any | null>(null);
+  const [showAddMilestone, setShowAddMilestone] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 3000); };
 
+
   React.useEffect(() => {
-    const ch = supabase.channel('ngo-sync')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'milestones' }, refetch)
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'drives' }, refetch)
-      .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    const handleSync = () => refetch();
+    window.addEventListener('trustchain-sync', handleSync);
+
+    try {
+      const ch = supabase.channel('ngo-sync')
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'milestones' }, refetch)
+        .on('postgres_changes', { event: '*', schema: 'public', table: 'drives' }, refetch)
+        .subscribe();
+      return () => {
+        window.removeEventListener('trustchain-sync', handleSync);
+        supabase.removeChannel(ch);
+      };
+    } catch (e) {
+      return () => {
+        window.removeEventListener('trustchain-sync', handleSync);
+      };
+    }
   }, [refetch]);
 
   // Metrics
   const totalRaised    = drives.reduce((s, d) => s + (d.raised_amount || 0), 0);
+  React.useEffect(() => {
+    if (selectedDrive) {
+      const updated = drives.find(d => d.id === selectedDrive.id);
+      if (updated) setSelectedDrive(updated);
+    }
+  }, [drives]);
+
   const totalCredited  = drives.reduce((acc, d) => acc + (d.milestones || []).filter(m => m.status === 'approved').reduce((s, m) => s + (m.target_amount || 0), 0), 0);
+
   const pendingApprovals = drives.reduce((s, d) => s + (d.milestones || []).filter(m => m.status === 'pending').length, 0);
   const allMilestones  = drives.flatMap(d => (d.milestones || []).map(m => ({ ...m, driveTitle: d.title })));
   const pendingMs      = allMilestones.filter(m => m.status === 'pending');
@@ -88,13 +111,13 @@ export const NgoDashboard: React.FC<Props> = ({ onBack, lang, dark, setDark, set
                 return (
                   <div key={d.id} className="drive-card card-hover" onClick={() => setSelectedDrive(d)}>
                     <div className="row-sb mb-8">
-                      <span className="badge badge-blue">{d.category || 'General'}</span>
+                      <span className="badge badge-blue">{td(lang, d.category || 'General')}</span>
                       <span className={`badge ${d.urgency_level === 'Critical' ? 'badge-red' : d.urgency_level === 'High' ? 'badge-orange' : 'badge-gray'}`}>
-                        {d.urgency_level}
+                        {td(lang, d.urgency_level)}
                       </span>
                     </div>
-                    <div className="drive-title">{d.title}</div>
-                    <div className="drive-meta">📍 {d.location || 'India'} &nbsp;·&nbsp; 👥 {d.beneficiaries_count || 0} {t(lang, 'beneficiaries')}</div>
+                    <div className="drive-title">{td(lang, d.title)}</div>
+                    <div className="drive-meta">📍 {td(lang, d.location || 'India')} &nbsp;·&nbsp; 👥 {d.beneficiaries_count || 0} {t(lang, 'beneficiaries')}</div>
                     <div className="prog-wrap">
                       <div className="prog-bar"><div className="prog-fill" style={{ width: `${pct}%` }} /></div>
                       <div className="prog-labels">
@@ -113,34 +136,59 @@ export const NgoDashboard: React.FC<Props> = ({ onBack, lang, dark, setDark, set
         )}
 
         {/* Drive Detail */}
-        {tab === 'home' && selectedDrive && (
-          <div className="slide-up">
-            <button className="back-btn" onClick={() => setSelectedDrive(null)}>← {t(lang, 'dashboard')}</button>
-            <div className="row-sb mb-16">
-              <div>
-                <h2 style={{ fontSize: 24 }}>{selectedDrive.title}</h2>
-                <div className="drive-meta">📍 {selectedDrive.location} &nbsp;·&nbsp; {selectedDrive.category}</div>
+        {tab === 'home' && selectedDrive && (() => {
+          const activeDrive = drives.find(d => d.id === selectedDrive.id) || selectedDrive;
+          return (
+            <div className="slide-up">
+              <button className="back-btn" onClick={() => setSelectedDrive(null)}>← {t(lang, 'dashboard')}</button>
+              <div className="row-sb mb-16">
+                <div>
+                  <h2 style={{ fontSize: 24 }}>{td(lang, activeDrive.title)}</h2>
+                  <div className="drive-meta">📍 {td(lang, activeDrive.location)} &nbsp;·&nbsp; {td(lang, activeDrive.category)}</div>
+                </div>
+                <span className={`badge ${activeDrive.urgency_level === 'Critical' ? 'badge-red' : 'badge-orange'}`}>
+                  {td(lang, activeDrive.urgency_level)}
+                </span>
               </div>
-              <span className={`badge ${selectedDrive.urgency_level === 'Critical' ? 'badge-red' : 'badge-orange'}`}>
-                {selectedDrive.urgency_level}
-              </span>
-            </div>
 
-            {selectedDrive.problem_statement && (
-              <div className="card mb-24" style={{ background: 'var(--primary-lt)', border: '1px solid #bfdbfe' }}>
-                <div className="text-sm text-bold mb-4" style={{ color: 'var(--primary)' }}>{t(lang, 'problemStatement')}</div>
-                <p style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.6 }}>{selectedDrive.problem_statement}</p>
+              {activeDrive.problem_statement && (
+                <div className="card mb-24" style={{ background: 'var(--primary-lt)', border: '1px solid #bfdbfe' }}>
+                  <div className="text-sm text-bold mb-4" style={{ color: 'var(--primary)' }}>{t(lang, 'problemStatement')}</div>
+                  <p style={{ fontSize: 13, color: 'var(--text-2)', lineHeight: 1.6 }}>{activeDrive.problem_statement}</p>
+                </div>
+              )}
+
+              <div className="grid-3 mb-24">
+                <div className="stat-card"><div className="stat-label">{t(lang, 'totalRaised')}</div><div className="stat-value blue" style={{ fontSize: 22 }}>₹{activeDrive.raised_amount.toLocaleString('en-IN')}</div></div>
+                <div className="stat-card"><div className="stat-label">{t(lang, 'goal')}</div><div className="stat-value" style={{ fontSize: 22 }}>₹{activeDrive.target_amount.toLocaleString('en-IN')}</div></div>
+                <div className="stat-card"><div className="stat-label">{t(lang, 'beneficiaries')}</div><div className="stat-value" style={{ fontSize: 22 }}>{activeDrive.beneficiaries_count}</div></div>
               </div>
-            )}
-
-            <div className="grid-3 mb-24">
-              <div className="stat-card"><div className="stat-label">{t(lang, 'totalRaised')}</div><div className="stat-value blue" style={{ fontSize: 22 }}>₹{selectedDrive.raised_amount.toLocaleString('en-IN')}</div></div>
-              <div className="stat-card"><div className="stat-label">{t(lang, 'goal')}</div><div className="stat-value" style={{ fontSize: 22 }}>₹{selectedDrive.target_amount.toLocaleString('en-IN')}</div></div>
-              <div className="stat-card"><div className="stat-label">{t(lang, 'beneficiaries')}</div><div className="stat-value" style={{ fontSize: 22 }}>{selectedDrive.beneficiaries_count}</div></div>
-            </div>
 
             <div className="card">
-              <div className="section-head"><h3>{t(lang, 'milestones')}</h3></div>
+              <div className="section-head" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <h3>{t(lang, 'milestones')}</h3>
+                <button
+                  className="btn btn-outline btn-sm"
+                  onClick={() => setShowAddMilestone(!showAddMilestone)}
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13 }}
+                >
+                  {showAddMilestone ? '✕ Cancel' : '+ Add Milestone'}
+                </button>
+              </div>
+
+              {showAddMilestone && (
+                <div style={{ marginBottom: 24, padding: 16, background: 'var(--bg-2, #f8fafc)', borderRadius: 12, border: '1px solid var(--border)' }}>
+                  <CreateMilestoneForm
+                    driveId={selectedDrive.id}
+                    onSuccess={() => {
+                      setShowAddMilestone(false);
+                      refetch();
+                      showToast('Milestone created successfully!');
+                    }}
+                  />
+                </div>
+              )}
+
               {(selectedDrive.milestones || []).map((m: any, i: number) => (
                 <div key={m.id} className="milestone-row">
                   <div className="row">
@@ -148,28 +196,29 @@ export const NgoDashboard: React.FC<Props> = ({ onBack, lang, dark, setDark, set
                       {m.status === 'approved' ? '✓' : i + 1}
                     </div>
                     <div>
-                      <div className="text-bold">{m.title}</div>
-                      <div className="text-sm text-muted">{m.target_date ? new Date(m.target_date).toLocaleDateString('en-IN') : 'No date'}</div>
+                      <div className="text-bold">{td(lang, m.title)}</div>
+                      <div className="text-sm text-muted">{m.target_date ? new Date(m.target_date).toLocaleDateString('en-IN') : t(lang, 'escrowStage')}</div>
                     </div>
                   </div>
                   <div className="row gap-16">
                     <span className="text-bold">₹{m.target_amount.toLocaleString('en-IN')}</span>
                     <span className={`badge ${m.status === 'approved' ? 'badge-green' : m.status === 'rejected' ? 'badge-red' : 'badge-orange'}`}>
-                      {m.status === 'approved' ? t(lang, 'verified') : m.status === 'rejected' ? t(lang, 'rejected') : m.status}
+                      {m.status === 'approved' ? t(lang, 'verified') : m.status === 'rejected' ? t(lang, 'rejected') : td(lang, m.status)}
                     </span>
                   </div>
                 </div>
               ))}
+              </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {tab === 'create' && (
           <div className="slide-up">
             <button className="back-btn" onClick={() => setTab('home')}>← {t(lang, 'dashboard')}</button>
             <h2 style={{ fontSize: 22, marginBottom: 24 }}>{t(lang, 'newDrive')}</h2>
             <div className="card">
-              <CreateDriveForm onSuccess={() => { showToast(t(lang, 'live') + '...'); setTab('home'); refetch(); }} />
+              <CreateDriveForm lang={lang} onSuccess={() => { showToast(t(lang, 'live') + '...'); setTab('home'); refetch(); }} />
             </div>
           </div>
         )}
@@ -182,7 +231,7 @@ export const NgoDashboard: React.FC<Props> = ({ onBack, lang, dark, setDark, set
             {pendingMs.length === 0 ? (
               <div className="empty"><div className="empty-icon">📭</div><h4>{t(lang, 'noAuditRecords')}</h4></div>
             ) : (
-              <div className="card"><ProofSubmissionForm milestones={pendingMs} onSuccess={() => { showToast(t(lang, 'live') + '...'); setTab('home'); }} /></div>
+              <div className="card"><ProofSubmissionForm lang={lang} milestones={pendingMs} onSuccess={() => { showToast(t(lang, 'live') + '...'); setTab('home'); }} /></div>
             )}
           </div>
         )}
